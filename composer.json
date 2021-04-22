@@ -28,5 +28,12 @@
             "type": "vcs",
             "url": "https://github.com/SunnyFlail/Typestring"
         }
+    ],
+    "keywords": [
+        "PSR-11",
+        "container",
+        "container-interface",
+        "container-interop",
+        "psr"
     ]
 }
