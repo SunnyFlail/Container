@@ -24,11 +24,15 @@ class Container implements ContainerInterface
     }
 
     public function get(string $id)
-    {
+    { 
         if (!isset($this->entries[$id])) {
             throw new NotFoundException(sprintf("Entry '%s' not found!", $id));
         }
-        
+
+        if (!is_object($this->entries[$id])) {
+            throw new ContainerException(sprintf("Configuration corrupted for %s", $id));
+        }
+               
         if ($this->entries[$id] instanceof Entry) {
             try {
                 $this->entries[$id] = $this->invoke($this->entries[$id]);            
@@ -39,7 +43,7 @@ class Container implements ContainerInterface
         return $this->entries[$id];
     }
 
-    public function has(string $id)
+    public function has(string $id): bool
     {
         return isset($this->entries[$id]);
     }
@@ -55,8 +59,7 @@ class Container implements ContainerInterface
         $config = $entry->getConfig();
 
         if (!class_exists($className)) {
-            throw new ContainerException(
-                sprintf("Class %s doesn't exist!"));
+            throw new ContainerException(sprintf("Class %s does not exist!"));
         }
 
         $reflection = new ReflectionClass($className);       
@@ -66,18 +69,19 @@ class Container implements ContainerInterface
         }
         try{
             $object = $reflection->newInstance(...$constructorParams ?? []);
-        } catch (\ReflectionException) {
+        } catch (\ReflectionException $e) {
             throw new ContainerException(
-                sprintf("Something went wrong during instation of %s", $className));
+                sprintf("Something went wrong during instation of %s. Message: %s", $className, $e->getMessage())
+            );
         }
         if (isset($config["methods"])) {
-            // Methods to be called just after initialisation
             foreach ($config["methods"] as $methodName => $calls) {
                 try {
                     $method = $reflection->getMethod($methodName);
                 } catch (\ReflectionException $e) {
                     throw new ContainerException(
-                        sprintf("Method %s::%s doesn't exist!", ));
+                        sprintf("Method %s::%s doesn't exist!", $className, $methodName)
+                    );
                 }
                 foreach ($calls as $attemptNum => $params) {
                     $params = $this->resolveFunctionParams($method, $params);
@@ -86,7 +90,9 @@ class Container implements ContainerInterface
                     } catch (\ReflectionException) {
                         throw new ContainerException(
                             sprintf("Something went wrong during invoking %s::%s for the %s time!",
-                                    $className, $methodName, $attemptNum));
+                                $className, $methodName, $attemptNum
+                            )
+                        );
                     }
                 }
             }
@@ -103,31 +109,70 @@ class Container implements ContainerInterface
         $methodName = $function->getName();
         $className = $function->getDeclaringClass()->getName();
 
-        if (!$params = $function->getParameters() && $config) {
+        if (!($params = $function->getParameters()) && $config) {
                 throw new ContainerException(
-                    sprintf("Method %s::%s doesn't take in any parameters!", $className, $methodName));
+                    sprintf("Method %s::%s doesn't take in any parameters!", $className, $methodName)
+                );
         }   
 
-       //foreach ($params as $param) {
-        return array_map(
-            function($param) {
-                $paramName = $param->getName();
-                $requiredTypes = $this->getTypeStrings($param);
+        $arguments = [];
 
-                if (isset($config[$paramName])) {
-                    $argument = $config[$paramName];
-                    
+        foreach ($params as $param) {
+            $paramName = $param->getName();
+            $requiredTypes = $this->getTypeStrings($param);
 
+            if (isset($config[$paramName])) {
+                $argument = $config[$paramName];
+                if (is_string($argument) && class_exists("\\$argument")) {
+                    try {
+                        $argument = $this->get($argument);
+                    } catch (NotFoundException $e) {
+                        throw new ContainerException(
+                            sprintf(
+                                "Provided parameter %s for %s::%s points to a class which isn't registered!",
+                                $paramName, $className, $methodName
+                            )
+                        );
+                    }
                 }
-                if (!$param->isDefaultValueAvailable() && !isset($config[$paramName])) {
+                if ($requiredTypes) {
+                    if (is_object($argument)) {
+                        foreach ($requiredTypes as $type) {
+                            $type = "\\$type";
+                            if ((interface_exists($type) || class_exists($type)) && $argument instanceof $type) {
+
+                                $arguments[] = $argument;
+
+                                continue(2);
+                            }
+                        }
+                        $argType = get_class($argument);
+                    }
+                    if (in_array($argType = gettype($argument), $requiredTypes)) {
+                        $arguments[] = $argument;
+                        continue;
+                    }
+
                     throw new ContainerException(
-                        sprintf("Value not provided for parameter %s in %s::%s!", $paramName, $className, $methodName));
+                        sprintf(
+                            "Parameter %s of %s::%s should be one of '%s', got %s.",
+                            $paramName, $className, $methodName, implode(", ", $requiredTypes), $argType
+                        )
+                    );
                 }
 
-                return $param->getDefaultValue();
-            },
-        $params);
+            }
 
+            if (!$param->isDefaultValueAvailable()) {
+                throw new ContainerException(
+                    sprintf("Value not provided for parameter %s in %s::%s!", $paramName, $className, $methodName)
+                );
+            }
+
+            $arguments[] = $param->getDefaultValue();
+        }
+
+        return $arguments;
     }
 
     public function configure(IContainerLoader $loader)
