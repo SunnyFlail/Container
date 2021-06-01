@@ -121,6 +121,11 @@ class Container implements ContainerInterface
             $paramName = $param->getName();
             $requiredTypes = $this->getTypeStrings($param);
 
+            if ($paramName === ContainerInterface::class) {
+                $arguments[] = $this;
+                continue;
+            }
+
             if (isset($config[$paramName])) {
                 $argument = $config[$paramName];
                 if (is_string($argument) && class_exists("\\$argument")) {
