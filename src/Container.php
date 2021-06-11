@@ -55,11 +55,11 @@ class Container implements ContainerInterface
 
     private function invoke(Entry $entry)
     {
-        $className = "\\".$entry->getClassName();
+        $className = $entry->getClassName();
         $config = $entry->getConfig();
 
         if (!class_exists($className)) {
-            throw new ContainerException(sprintf("Class %s does not exist!", $className));
+            throw new ContainerException(sprintf("Class '%s' does not exist!"));
         }
 
         $reflection = new ReflectionClass($className);       
@@ -121,7 +121,7 @@ class Container implements ContainerInterface
             $paramName = $param->getName();
             $requiredTypes = $this->getTypeStrings($param);
 
-            if ($paramName === ContainerInterface::class) {
+            if (in_array(ContainerInterface::class, $requiredTypes)) {
                 $arguments[] = $this;
                 continue;
             }

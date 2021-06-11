@@ -20,7 +20,7 @@ final class JsonContainerLoader implements IContainerLoader
             foreach($data as $className => $settings) {
                 $entries[$className] = new Entry($className, $settings);
             }
-        } catch (LoaderException $e) {
+        } catch (\LoaderException $e) {
             throw $e;
         } catch (\Throwable $t) {
             throw new LoaderException("Container configuration corrupted!");
