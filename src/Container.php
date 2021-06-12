@@ -168,6 +168,13 @@ class Container implements ContainerInterface
 
             }
 
+            foreach ($requiredTypes as $type) {
+                if (class_exists("\\".$type) && $this->has($type)) {
+                    $argument = $this->get($type);
+                    continue;
+                }
+            }
+
             if (!$param->isDefaultValueAvailable()) {
                 throw new ContainerException(
                     sprintf("Value not provided for parameter %s in %s::%s!", $paramName, $className, $methodName)
@@ -180,8 +187,4 @@ class Container implements ContainerInterface
         return $arguments;
     }
 
-    public function configure(IContainerLoader $loader)
-    {
-        $this->entries = $loader->loadEntries();
-    }
 }

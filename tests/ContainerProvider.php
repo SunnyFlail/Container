@@ -19,28 +19,25 @@ class ContainerProvider
     {
         $container = new Container();
 
-        $loader = new class implements IContainerLoader{
-            public function loadEntries(): array
-            {
-                return [
-                    ReflectionClass::class => new Entry(
-                        ReflectionClass::class, [
-                            "constructor" => [
-                                "objectOrClass" => ArrayIterator::class
-                            ]
-                        ]
-                    ),
-                    ArrayIterator::class => new Entry(
-                        ArrayIterator::class, [
-                            "constructor" => [
-                                "array" => []
-                            ]
-                        ]
-                    )
-                ];
-            }
-        };
-        $container->configure($loader);
+        $classes = [
+            [
+                ReflectionClass::class, [
+                    "constructor" => [
+                        "objectOrClass" => ArrayIterator::class
+                    ]
+                ]
+            ], [
+                ArrayIterator::class, [
+                    "constructor" => [
+                        "array" => []
+                    ]
+                ]
+            ]
+        ];
+
+        foreach ($classes as [$classname, $config]) {
+            $container->register($classname, $config);
+        }
 
         return $container;
     }
