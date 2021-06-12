@@ -170,7 +170,7 @@ class Container implements ContainerInterface
 
             foreach ($requiredTypes as $type) {
                 if (class_exists("\\".$type) && $this->has($type)) {
-                    $argument = $this->get($type);
+                    $arguments[] = $this->get($type);
                     continue (2);
                 }
             }
