@@ -17,10 +17,13 @@ class Container implements ContainerInterface
     use \SunnyFlail\Traits\GetTypesTrait;
 
     private array $entries;
+    private bool $autowire;
 
-    public function __construct()
-    {
+    public function __construct(
+        bool $autowire = true,
+    ) {
         $this->entries = [];
+        $this->autowire = $autowire;
     }
 
     public function get(string $id)
@@ -168,12 +171,18 @@ class Container implements ContainerInterface
 
             }
 
-            foreach ($requiredTypes as $type) {
-                if (class_exists("\\".$type) && $this->has($type)) {
-                    $arguments[] = $this->get($type);
-                    continue (2);
+            if ($this->autowire) {
+                foreach ($requiredTypes as $type) {
+                    if (
+                        (class_exists("\\".$type) || interface_exists("\\".$type) )
+                        && $this->has($type)
+                    ) {
+                        $arguments[] = $this->get($type);
+                        continue (2);
+                    }
                 }
             }
+
 
             if (!$param->isDefaultValueAvailable()) {
                 throw new ContainerException(
