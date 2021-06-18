@@ -156,7 +156,9 @@ class Container implements ContainerInterface
                         }
                         $argType = get_class($argument);
                     }
-                    if (in_array($argType = gettype($argument), $requiredTypes)) {
+                    if (in_array($argType = gettype($argument), $requiredTypes)
+                        || ($argType === "integer" && in_array("int", $requiredTypes))
+                    ) {
                         $arguments[] = $argument;
                         continue;
                     }
