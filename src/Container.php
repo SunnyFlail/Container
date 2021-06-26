@@ -10,6 +10,7 @@ use \ReflectionClass;
 use \ReflectionMethod;
 use \ReflectionException;
 use \ReflectionFunctionAbstract;
+use ReflectionParameter;
 
 class Container implements ContainerInterface
 {
@@ -27,22 +28,20 @@ class Container implements ContainerInterface
     }
 
     public function get(string $id)
-    { 
-        if (!isset($this->entries[$id])) {
-            throw new NotFoundException(sprintf("Entry '%s' not found!", $id));
+    {
+        if (!class_exists($id)) {
+            throw new NotFoundException(sprintf("Class '%s' does not exist!", $id));
         }
-
-        if (!is_object($this->entries[$id])) {
-            throw new ContainerException(sprintf("Configuration corrupted for %s", $id));
+        if (!isset($this->entries[$id])) {
+            if (!$this->autowire) {
+                throw new NotFoundException(sprintf("Entry '%s' not found!", $id));
+            }
+            $this->entries[$id] = $this->invokeEntry($id, []);
+        }
+        if (is_array($this->entries[$id])) {
+            $this->entries[$id] = $this->invokeEntry($id, $this->entries[$id]);
         }
                
-        if ($this->entries[$id] instanceof Entry) {
-            try {
-                $this->entries[$id] = $this->invoke($this->entries[$id]);            
-            } catch (ContainerExceptionInterface $e) {
-                throw new ContainerException($e->getMessage());
-            }
-        }
         return $this->entries[$id];
     }
 
@@ -51,57 +50,49 @@ class Container implements ContainerInterface
         return isset($this->entries[$id]);
     }
 
-    public function register(string $id, array $options)
+    public function withEntries(array $entries): self
     {
-        $this->entries[$id] = new Entry($id, $options);
+        $this->entries = $entries;
+        return $this;
     }
 
-    private function invoke(Entry $entry)
+    private function invokeEntry(string $className, array $config)
     {
-        $className = $entry->getClassName();
-        $config = $entry->getConfig();
-
-        if (!class_exists($className)) {
-            throw new ContainerException(sprintf("Class '%s' does not exist!"));
+        try {
+            return $this->invoke($className, $config);            
+        } catch (\Throwable $e) {
+            throw new ContainerException(
+                sprintf("An error occurred while invoking '%s'.", $className),
+                0, $e
+            );
         }
+    }
+
+    private function invoke(string $className, array $config)
+    {
+
 
         $reflection = new ReflectionClass($className);       
 
         if ($constructor = $reflection->getConstructor()) {
-            $constructorParams = $this->resolveFunctionParams($constructor, $config["constructor"] ?? []);
-        }
-        try{
-            $object = $reflection->newInstance(...$constructorParams ?? []);
-        } catch (\ReflectionException $e) {
-            throw new ContainerException(
-                sprintf("Something went wrong during instation of %s. Message: %s", $className, $e->getMessage())
-            );
-        }
-        if (isset($config["methods"])) {
-            foreach ($config["methods"] as $methodName => $calls) {
-                try {
-                    $method = $reflection->getMethod($methodName);
-                } catch (\ReflectionException $e) {
-                    throw new ContainerException(
-                        sprintf("Method %s::%s doesn't exist!", $className, $methodName)
-                    );
-                }
-                foreach ($calls as $attemptNum => $params) {
-                    $params = $this->resolveFunctionParams($method, $params);
-                    try{
-                        $method->invoke($object, ...$params);
-                    } catch (\ReflectionException) {
-                        throw new ContainerException(
-                            sprintf("Something went wrong during invoking %s::%s for the %s time!",
-                                $className, $methodName, $attemptNum
-                            )
-                        );
-                    }
-                }
-            }
+            $constructorParams = $this->resolveFunctionParams($constructor, $config);
         }
     
-        return $object;
+        return $this->instantiateObject($reflection, $constructorParams ?? []);
+    }
+
+    private function instantiateObject(ReflectionClass $reflection, array $constructorParams): object
+    {
+        try{
+            return $reflection->newInstance(...$constructorParams);
+        } catch (\ReflectionException $e) {
+            throw new ContainerException(
+                sprintf(
+                    "Something went wrong during instation of '%s'.",
+                    $reflection->getName()
+                ), 0, $e
+            );
+        }
     }
 
     private function resolveFunctionParams(
@@ -113,89 +104,103 @@ class Container implements ContainerInterface
         $className = $function->getDeclaringClass()->getName();
 
         if (!($params = $function->getParameters()) && $config) {
-                throw new ContainerException(
-                    sprintf("Method %s::%s doesn't take in any parameters!", $className, $methodName)
-                );
+            throw new ContainerException(
+                sprintf("Method %s::%s doesn't take in any parameters!", $className, $methodName)
+            );
         }   
 
         $arguments = [];
 
         foreach ($params as $param) {
-            $paramName = $param->getName();
-            $requiredTypes = $this->getTypeStrings($param);
-
-            if (in_array(ContainerInterface::class, $requiredTypes)) {
-                $arguments[] = $this;
-                continue;
-            }
-
-            if (isset($config[$paramName])) {
-                $argument = $config[$paramName];
-                if (is_string($argument) && class_exists("\\$argument")) {
-                    try {
-                        $argument = $this->get($argument);
-                    } catch (NotFoundException $e) {
-                        throw new ContainerException(
-                            sprintf(
-                                "Provided parameter %s for %s::%s points to a class which isn't registered!",
-                                $paramName, $className, $methodName
-                            )
-                        );
-                    }
-                }
-                if ($requiredTypes) {
-                    if (is_object($argument)) {
-                        foreach ($requiredTypes as $type) {
-                            $type = "\\$type";
-                            if ((interface_exists($type) || class_exists($type)) && $argument instanceof $type) {
-
-                                $arguments[] = $argument;
-
-                                continue(2);
-                            }
-                        }
-                        $argType = get_class($argument);
-                    }
-                    if (in_array($argType = gettype($argument), $requiredTypes)
-                        || ($argType === "integer" && in_array("int", $requiredTypes))
-                    ) {
-                        $arguments[] = $argument;
-                        continue;
-                    }
-
-                    throw new ContainerException(
-                        sprintf(
-                            "Parameter %s of %s::%s should be one of '%s', got %s.",
-                            $paramName, $className, $methodName, implode(", ", $requiredTypes), $argType
-                        )
-                    );
-                }
-
-            }
-
-            if ($this->autowire) {
-                foreach ($requiredTypes as $type) {
-                    if (
-                        (class_exists("\\".$type) || interface_exists("\\".$type) )
-                        && $this->has($type)
-                    ) {
-                        $arguments[] = $this->get($type);
-                        continue (2);
-                    }
-                }
-            }
-
-
-            if (!$param->isDefaultValueAvailable()) {
-                throw new ContainerException(
-                    sprintf("Value not provided for parameter %s in %s::%s!", $paramName, $className, $methodName)
-                );
-            }
-
-            $arguments[] = $param->getDefaultValue();
+            $arguments[] = $this->resolveFunctionParam(
+                $methodName,
+                $className,
+                $config,
+                $param
+            );
         }
 
         return $arguments;
     }
 
+    private function resolveFunctionParam(
+        string $methodName,
+        string $className,
+        array $config,
+        ReflectionParameter $param,
+    ) {
+        $paramName = $param->getName();
+        $requiredTypes = $this->getTypeStrings($param);
+        $config[$paramName] ?? null;
+
+        if (in_array(ContainerInterface::class, $requiredTypes)) {
+            return $this;
+        }
+
+        if (isset($config[$paramName])) {
+            $argument = $config[$paramName];
+            if (is_string($argument) && class_exists("\\$argument")) {
+                try {
+                    $argument = $this->get($argument);
+                } catch (ContainerExceptionInterface $e) {
+                    throw new ContainerException(
+                        sprintf(
+                            "Provided parameter %s for %s::%s points to a class which isn't available!",
+                            $paramName, $className, $methodName
+                        ), 0, $e
+                    );
+                }
+            }
+            if ($requiredTypes) {
+                if (is_object($argument)) {
+                    foreach ($requiredTypes as $type) {
+                        $type = "\\$type";
+                        if ((interface_exists($type) || class_exists($type))
+                            && $argument instanceof $type
+                        ) {
+                            return $argument;
+                        }
+                    }
+                    $argType = get_class($argument);
+                }
+
+                if (in_array($argType = gettype($argument), $requiredTypes)
+                    || ($argType === "integer" && in_array("int", $requiredTypes))
+                ) {
+                    return $argument;
+                }
+
+                throw new ContainerException(
+                    sprintf(
+                        "Parameter %s of %s::%s should be one of '%s', got %s.",
+                        $paramName, $className, $methodName,
+                        implode(", ", $requiredTypes), $argType
+                    )
+                );
+            }
+        }
+
+        if ($this->autowire) {
+            foreach ($requiredTypes as $type) {
+                if (
+                    (class_exists("\\".$type) || interface_exists("\\".$type) )
+                    && $this->has($type)
+                ) {
+                    return $this->get($type);
+                }
+            }
+        }
+
+        if (!$param->isDefaultValueAvailable()) {
+            throw new ContainerException(
+                sprintf(
+                    "Value not provided for parameter %s in %s::%s!",
+                    $paramName, $className, $methodName
+                )
+            );
+        }
+
+        return $param->getDefaultValue();
+    }
+    
 }

@@ -15,36 +15,32 @@ use \ArrayIterator;
 class ContainerProvider
 {
 
+    private static $CONTAINER;
+
     private static function setUpContainer(): Container
     {
         $container = new Container();
-
-        $classes = [
-            [
-                ReflectionClass::class, [
-                    "constructor" => [
-                        "objectOrClass" => ArrayIterator::class
-                    ]
-                ]
-            ], [
-                ArrayIterator::class, [
-                    "constructor" => [
-                        "array" => []
-                    ]
-                ]
+        return $container->withEntries([
+            ReflectionClass::class => [
+                "objectOrClass" => ArrayIterator::class
+            ],
+            ArrayIterator::class => [
+                "array" => []
             ]
-        ];
+        ]);
+    }
 
-        foreach ($classes as [$classname, $config]) {
-            $container->register($classname, $config);
+    private static function getContainer(): Container
+    {
+        if (!isset(self::$CONTAINER)) {
+            self::$CONTAINER = self::setUpContainer();
         }
-
-        return $container;
+        return self::$CONTAINER;
     }
 
     public static function validProvider(): array
     {
-        $container = self::setUpContainer();
+        $container = self::getContainer();
 
         return [
             "Simple Invocation" => [
@@ -58,11 +54,14 @@ class ContainerProvider
 
     public static function exceptionProvider(): array
     {
-        $container = self::setUpContainer();
-
+        $container = self::getContainer();
+        
         return [
             "Not found" => [
-                $container, \PDO::class, NotFoundException::class
+                $container, "SimpleObject", NotFoundException::class
+            ],
+            "Bad configuration" => [
+                $container, \SplFileObject::class, ContainerException::class
             ]
         ];
     }

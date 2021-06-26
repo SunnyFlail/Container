@@ -27,7 +27,7 @@
         }
     },
     "config": {
-        "classmap-authoritative":true
+        "classmap-authoritative": true
     },
     "keywords": [
         "PSR-11",
