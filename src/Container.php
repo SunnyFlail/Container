@@ -61,6 +61,9 @@ class Container implements ContainerInterface
         try {
             return $this->invoke($className, $config);            
         } catch (\Throwable $e) {
+            if ($e instanceof ContainerExceptionInterface) {
+                throw $e;
+            }
             throw new ContainerException(
                 sprintf("An error occurred while invoking '%s'.", $className),
                 0, $e
@@ -70,8 +73,6 @@ class Container implements ContainerInterface
 
     private function invoke(string $className, array $config)
     {
-
-
         $reflection = new ReflectionClass($className);       
 
         if ($constructor = $reflection->getConstructor()) {
@@ -131,7 +132,6 @@ class Container implements ContainerInterface
     ) {
         $paramName = $param->getName();
         $requiredTypes = $this->getTypeStrings($param);
-        $config[$paramName] ?? null;
 
         if (in_array(ContainerInterface::class, $requiredTypes)) {
             return $this;
@@ -182,10 +182,7 @@ class Container implements ContainerInterface
 
         if ($this->autowire) {
             foreach ($requiredTypes as $type) {
-                if (
-                    (class_exists("\\".$type) || interface_exists("\\".$type) )
-                    && $this->has($type)
-                ) {
+                if (class_exists("\\".$type) || interface_exists("\\".$type)) {
                     return $this->get($type);
                 }
             }

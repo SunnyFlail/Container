@@ -11,6 +11,7 @@ use \SunnyFlail\DI\{
     ContainerException
 };
 use \ArrayIterator;
+use Psr\Container\ContainerExceptionInterface;
 
 class ContainerProvider
 {
@@ -26,7 +27,8 @@ class ContainerProvider
             ],
             ArrayIterator::class => [
                 "array" => []
-            ]
+            ],
+            \SplFileObject::class => []
         ]);
     }
 
@@ -61,7 +63,7 @@ class ContainerProvider
                 $container, "SimpleObject", NotFoundException::class
             ],
             "Bad configuration" => [
-                $container, \SplFileObject::class, ContainerException::class
+                $container, \SplFileObject::class, ContainerExceptionInterface::class
             ]
         ];
     }
