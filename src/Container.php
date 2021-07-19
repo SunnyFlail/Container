@@ -2,17 +2,16 @@
 
 namespace SunnyFlail\DI;
 
-use \Psr\Container\{
-    ContainerInterface,
-    ContainerExceptionInterface
-};
 use \ReflectionClass;
 use \ReflectionMethod;
+use ReflectionFunction;
+use ReflectionParameter;
 use \ReflectionException;
 use \ReflectionFunctionAbstract;
-use ReflectionParameter;
+use \Psr\Container\ContainerInterface;
+use \Psr\Container\ContainerExceptionInterface;
 
-class Container implements ContainerInterface
+class Container implements IContainer
 {
 
     use \SunnyFlail\Traits\GetTypesTrait;
@@ -56,6 +55,22 @@ class Container implements ContainerInterface
         return $this;
     }
 
+    public function invokeFunction(array|string|callable $function, array $parameters): mixed
+    {
+        if (is_array($function)) {
+            [$object, $function] = $function;
+            $object = $this->get($object);
+            $function = new ReflectionMethod($object, $function);
+            $parameters = $this->resolveFunctionParams($function, $parameters);
+            
+            return $function->invokeArgs($object, $parameters);
+        }
+        $function = new ReflectionFunction($function);
+        $parameters = $this->resolveFunctionParams($function, $parameters);
+
+        return $function->invokeArgs($parameters);
+    }
+
     private function invokeEntry(string $className, array $config)
     {
         try {
@@ -82,6 +97,10 @@ class Container implements ContainerInterface
         return $this->instantiateObject($reflection, $constructorParams ?? []);
     }
 
+    private function invokeMethod(ReflectionMethod $method, array $config): mixed
+    {
+    }
+
     private function instantiateObject(ReflectionClass $reflection, array $constructorParams): object
     {
         try{
@@ -97,7 +116,7 @@ class Container implements ContainerInterface
     }
 
     private function resolveFunctionParams(
-        ReflectionMethod $function,
+        ReflectionFunctionAbstract $function,
         array $config
     ): ?array
     {
