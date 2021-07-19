@@ -17,12 +17,14 @@ class Container implements IContainer
     use \SunnyFlail\Traits\GetTypesTrait;
 
     private array $entries;
+    private array $interfaces;
     private bool $autowire;
 
     public function __construct(
         bool $autowire = true,
     ) {
         $this->entries = [];
+        $this->interfaces = [];
         $this->autowire = $autowire;
     }
 
@@ -49,32 +51,42 @@ class Container implements IContainer
         return isset($this->entries[$id]);
     }
 
-    public function withEntries(array $entries): self
+    public function withEntries(array $entries): IContainer
     {
         $this->entries = $entries;
         return $this;
     }
 
-    public function invokeFunction(array|string|callable $function, array $parameters): mixed
+    public function withIntefaces(array $entries): IContainer
+    {
+        $this->interfaces = $entries;
+        return $this;
+    }
+
+    public function invoke(array|string|callable $function, array $parameters): mixed
     {
         if (is_array($function)) {
             [$object, $function] = $function;
             $object = $this->get($object);
-            $function = new ReflectionMethod($object, $function);
-            $parameters = $this->resolveFunctionParams($function, $parameters);
             
-            return $function->invokeArgs($object, $parameters);
+            return $this->invokeMethod($function, $object, $parameters);
         }
-        $function = new ReflectionFunction($function);
-        $parameters = $this->resolveFunctionParams($function, $parameters);
 
-        return $function->invokeArgs($parameters);
+        return $this->invokeFunction($function, $parameters);
     }
 
+    /**
+     * Invokes object of provided class with provided parameters
+     * 
+     * @param string $className FQCN of class
+     * @param array $parameters
+     * 
+     * @throws ContainerException
+     */
     private function invokeEntry(string $className, array $config)
     {
         try {
-            return $this->invoke($className, $config);            
+            return $this->invokeObject($className, $config);            
         } catch (\Throwable $e) {
             if ($e instanceof ContainerExceptionInterface) {
                 throw $e;
@@ -86,46 +98,118 @@ class Container implements IContainer
         }
     }
 
-    private function invoke(string $className, array $config)
+    /**
+     * Invokes object of provided class with provided parameters
+     * 
+     * @param string $className FQCN of class
+     * @param array $parameters
+     * 
+     * @return object
+     */
+    private function invokeObject(string $className, array $parameters): object
     {
         $reflection = new ReflectionClass($className);       
 
         if ($constructor = $reflection->getConstructor()) {
-            $constructorParams = $this->resolveFunctionParams($constructor, $config);
+            $constructorParams = $this->resolveFunctionParams($constructor, $parameters);
         }
     
         return $this->instantiateObject($reflection, $constructorParams ?? []);
     }
 
-    private function invokeMethod(ReflectionMethod $method, array $config): mixed
+    /**
+     * Invokes method of provided object
+     * 
+     * @param string|callable $function Name of the method to invoke or Closure
+     * 
+     * @return mixed
+     * 
+     * @throws ContainerException
+     */
+    private function invokeFunction(string|callable $function, array $parameters): mixed
     {
+        try{
+            $function = new ReflectionFunction($function);
+            $parameters = $this->resolveFunctionParams($function, $parameters);
+        } catch (ReflectionException $e) {
+            throw new ContainerException(sprintf(
+                "An error occured while invoking function",
+                $function->getName()
+            ));
+        }
+
+        return $function->invokeArgs($parameters);
     }
 
+    /**
+     * Invokes method of provided object
+     * 
+     * @param string $method Name of the method to invoke 
+     * 
+     * @return mixed
+     * 
+     * @throws ContainerException
+     */
+    private function invokeMethod(string $method, object $object, array $parameters): mixed
+    {
+        try{
+            $method = new ReflectionMethod($object, $method);
+            $parameters = $this->resolveFunctionParams($method, $parameters);
+        } catch (ReflectionException $e) {
+            throw new ContainerException(sprintf(
+                "An error occured while invoking method %s of class %s",
+                $method->getName(), (new ReflectionClass($object))->getShortName()
+            ));
+        }
+
+        return $method->invokeArgs($object, $parameters);
+    }
+
+    /**
+     * Creates a copy of object of provided class with provided parameters
+     * 
+     * @param ReflectionClass $reflection Reflection of class
+     * @param array $constructorParams
+     * 
+     * @return object
+     * @throws ContainerException
+     */
     private function instantiateObject(ReflectionClass $reflection, array $constructorParams): object
     {
         try{
             return $reflection->newInstance(...$constructorParams);
-        } catch (\ReflectionException $e) {
+        } catch (ReflectionException $e) {
             throw new ContainerException(
                 sprintf(
-                    "Something went wrong during instation of '%s'.",
+                    'Something went wrong during instation of %s.',
                     $reflection->getName()
                 ), 0, $e
             );
         }
     }
 
+    /**
+     * Returns an associative array containing parameters for function
+     * 
+     * @param ReflectionFunctionAbstract $function Reflection of function
+     * @param array $config User provided parameters for function
+     * 
+     * @return array
+     */
     private function resolveFunctionParams(
         ReflectionFunctionAbstract $function,
         array $config
     ): ?array
     {
-        $methodName = $function->getName();
-        $className = $function->getDeclaringClass()->getName();
+        $functionName = $function->getName();
+        $className = null;
+        if ($function instanceof ReflectionMethod) {
+            $className = $function->getDeclaringClass()->getName();
+        }
 
         if (!($params = $function->getParameters()) && $config) {
             throw new ContainerException(
-                sprintf("Method %s::%s doesn't take in any parameters!", $className, $methodName)
+                sprintf("%s doesn't take in any parameters!", $this->getFunctionFullName($className, $functionName))
             );
         }   
 
@@ -133,7 +217,7 @@ class Container implements IContainer
 
         foreach ($params as $param) {
             $arguments[] = $this->resolveFunctionParam(
-                $methodName,
+                $functionName,
                 $className,
                 $config,
                 $param
@@ -143,12 +227,24 @@ class Container implements IContainer
         return $arguments;
     }
 
+    /**
+     * Returns value of param
+     * 
+     * @param string $functionName
+     * @param string|null $className
+     * @param array $config
+     * @param ReflectionParameter $param
+     * 
+     * @return mixed
+     * @throws ContainerException
+     */
     private function resolveFunctionParam(
-        string $methodName,
-        string $className,
+        string $functionName,
+        ?string $className,
         array $config,
         ReflectionParameter $param,
-    ) {
+    ): mixed
+    {
         $paramName = $param->getName();
         $requiredTypes = $this->getTypeStrings($param);
 
@@ -164,8 +260,8 @@ class Container implements IContainer
                 } catch (ContainerExceptionInterface $e) {
                     throw new ContainerException(
                         sprintf(
-                            "Provided parameter %s for %s::%s points to a class which isn't available!",
-                            $paramName, $className, $methodName
+                            "Parameter %s provided for %s points to a class which isn't available!",
+                            $paramName, $this->getFunctionFullName($className, $functionName)
                         ), 0, $e
                     );
                 }
@@ -191,8 +287,8 @@ class Container implements IContainer
 
                 throw new ContainerException(
                     sprintf(
-                        "Parameter %s of %s::%s should be one of '%s', got %s.",
-                        $paramName, $className, $methodName,
+                        "Parameter %s of %s should be one of '%s', got %s.",
+                        $paramName, $this->getFunctionFullName($className, $functionName),
                         implode(", ", $requiredTypes), $argType
                     )
                 );
@@ -201,7 +297,11 @@ class Container implements IContainer
 
         if ($this->autowire) {
             foreach ($requiredTypes as $type) {
-                if (class_exists("\\".$type) || interface_exists("\\".$type)) {
+                if (class_exists("\\".$type)) {
+                    return $this->get($type);
+                }
+                if (interface_exists("\\".$type) && array_key_exists($type, $this->interfaces)) {
+                    $type = "\\" . $this->interfaces[$type];
                     return $this->get($type);
                 }
             }
@@ -211,7 +311,7 @@ class Container implements IContainer
             throw new ContainerException(
                 sprintf(
                     "Value not provided for parameter %s in %s::%s!",
-                    $paramName, $className, $methodName
+                    $paramName, $className, $functionName
                 )
             );
         }
@@ -219,4 +319,12 @@ class Container implements IContainer
         return $param->getDefaultValue();
     }
     
+    private function getFunctionFullName(string $functionName, ?string $className): string
+    {
+        if ($className === null) {
+            return 'Function ' . $functionName;
+        }
+        return 'Method ' . $className . '::'. $functionName;
+    }
+
 }

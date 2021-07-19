@@ -15,6 +15,24 @@ interface IContainer extends ContainerInterface
      * 
      * @return mixed
      */
-    public function invokeFunction(array|string|callable $function, array $parameters): mixed;
+    public function invoke(array|string|callable $function, array $parameters): mixed;
+
+    /**
+     * Registers new Entries
+     * 
+     * @param array $entries Associative array of arrays, Keys are class FQCN, values are arrays with param names as keys
+     * 
+     * @return IContainer 
+     */
+    public function withEntries(array $entries): IContainer;
+
+    /**
+     * Registers classes defaulting to Interfaces
+     * 
+     * @param array $entries Asssociative array with Interface FQCN as key and Class FQCN as value
+     * 
+     * @return IContainer
+     */
+    public function withIntefaces(array $entries): IContainer;
 
 }
