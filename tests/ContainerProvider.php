@@ -67,4 +67,15 @@ class ContainerProvider
             ]
         ];
     }
+
+    public static function functionProvider(): array
+    {
+        $container = self::getContainer();
+
+        return [
+            "strlen" => [
+                $container, 'strlen', ['string' => "Test"], 4
+            ]
+        ];
+    }
 }

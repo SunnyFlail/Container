@@ -57,7 +57,7 @@ class Container implements IContainer
         return $this;
     }
 
-    public function withIntefaces(array $entries): IContainer
+    public function withInterfaces(array $entries): IContainer
     {
         $this->interfaces = $entries;
         return $this;
@@ -300,8 +300,8 @@ class Container implements IContainer
                 if (class_exists("\\".$type)) {
                     return $this->get($type);
                 }
-                if (interface_exists("\\".$type) && array_key_exists($type, $this->interfaces)) {
-                    $type = "\\" . $this->interfaces[$type];
+                if (interface_exists("\\".$type) && isset($this->interfaces[$type])) {
+                    $type = $this->interfaces[$type];
                     return $this->get($type);
                 }
             }

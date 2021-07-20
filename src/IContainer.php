@@ -33,6 +33,6 @@ interface IContainer extends ContainerInterface
      * 
      * @return IContainer
      */
-    public function withIntefaces(array $entries): IContainer;
+    public function withInterfaces(array $entries): IContainer;
 
 }

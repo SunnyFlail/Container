@@ -32,7 +32,20 @@ class ContainerTest extends TestCase
     {
         $this->expectException($expected);
 
-        $object = $container->get($key);
+        $container->get($key);
+    }
+
+    /**
+     * @dataProvider Tests\ContainerProvider::functionProvider
+     */
+    public function testFunctionInvoking(Container $container, string $functionName, array $parameters, mixed $expected)
+    {
+        $result = $container->invoke($functionName, $parameters);
+
+        $this->assertEquals(
+            $expected,
+            $result
+        );
     }
 
 }
