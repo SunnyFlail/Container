@@ -31,11 +31,11 @@ class Container implements IContainer
     public function get(string $id)
     {
         if (!class_exists($id)) {
-            throw new NotFoundException(sprintf("Class '%s' does not exist!", $id));
+            throw new NotFoundException(sprintf("Class %s does not exist!", $id));
         }
         if (!isset($this->entries[$id])) {
             if (!$this->autowire) {
-                throw new NotFoundException(sprintf("Entry '%s' not found!", $id));
+                throw new NotFoundException(sprintf("Entry %s not found!", $id));
             }
             $this->entries[$id] = $this->invokeEntry($id, []);
         }
@@ -92,7 +92,7 @@ class Container implements IContainer
                 throw $e;
             }
             throw new ContainerException(
-                sprintf("An error occurred while invoking '%s'.", $className),
+                sprintf("An error occurred while invoking %s", $className),
                 0, $e
             );
         }
@@ -133,7 +133,7 @@ class Container implements IContainer
             $parameters = $this->resolveFunctionParams($function, $parameters);
         } catch (ReflectionException $e) {
             throw new ContainerException(sprintf(
-                "An error occured while invoking function",
+                "An error occured while invoking function %s",
                 $function->getName()
             ));
         }
@@ -254,10 +254,11 @@ class Container implements IContainer
 
         if (isset($config[$paramName])) {
             $argument = $config[$paramName];
-            if (is_string($argument) && class_exists("\\$argument")) {
+
+            if (is_string($argument) && class_exists('\\' . $argument)) {
                 try {
                     $argument = $this->get($argument);
-                } catch (ContainerExceptionInterface $e) {
+                } catch (\Throwable $e) {
                     throw new ContainerException(
                         sprintf(
                             "Parameter %s provided for %s points to a class which isn't available!",
@@ -269,38 +270,35 @@ class Container implements IContainer
             if ($requiredTypes) {
                 if (is_object($argument)) {
                     foreach ($requiredTypes as $type) {
-                        $type = '\\' . '$type';
+                        $type = '\\' . $type;
                         if ((interface_exists($type) || class_exists($type))
                             && $argument instanceof $type
                         ) {
                             return $argument;
                         }
                     }
-                    $argType = get_class($argument);
-                }
-
-                try {
-                    return $this->resolvePrimitiveParam($argument, $requiredTypes);
-                } catch (ContainerExceptionInterface) {
-                    $argType = gettype($argument);
-
-                    throw new ContainerException(
-                        sprintf(
-                            "Parameter %s of %s should be one of '%s', got %s.",
-                            $paramName, $this->getFunctionFullName($className, $functionName),
-                            implode(", ", $requiredTypes), $argType
-                        )
-                    );
+                } else {
+                    try {
+                        return $this->resolvePrimitiveParam($argument, $requiredTypes);
+                    } catch (ContainerExceptionInterface) {
+                        throw new ContainerException(
+                            sprintf(
+                                "Parameter %s of %s should be one of '%s', got %s.",
+                                $paramName, $this->getFunctionFullName($className, $functionName),
+                                implode(", ", $requiredTypes), $this->getArgumentType($argument)
+                            )
+                        );
+                    }
                 }
             }
         }
 
         if ($this->autowire) {
             foreach ($requiredTypes as $type) {
-                if (class_exists("\\".$type)) {
+                if (class_exists('\\' . $type)) {
                     return $this->get($type);
                 }
-                if (interface_exists("\\".$type) && isset($this->interfaces[$type])) {
+                if (interface_exists('\\' . $type) && isset($this->interfaces[$type])) {
                     $type = $this->interfaces[$type];
                     return $this->get($type);
                 }
@@ -368,6 +366,22 @@ class Container implements IContainer
             return 'Function ' . $functionName;
         }
         return 'Method ' . $className . '::'. $functionName;
+    }
+
+    /**
+     * Returns the name of type / class of provided argument
+     * 
+     * @param mixed $argument
+     * 
+     * @return string
+     */
+    private function getArgumentType(mixed $argument): mixed
+    {
+        if (is_object($argument)) {
+            return get_class($argument);
+        }
+
+        return gettype($argument);
     }
 
 }
