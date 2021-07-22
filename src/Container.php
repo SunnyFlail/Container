@@ -269,7 +269,7 @@ class Container implements IContainer
             if ($requiredTypes) {
                 if (is_object($argument)) {
                     foreach ($requiredTypes as $type) {
-                        $type = '\\$type';
+                        $type = '\\' . '$type';
                         if ((interface_exists($type) || class_exists($type))
                             && $argument instanceof $type
                         ) {
