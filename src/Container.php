@@ -269,7 +269,7 @@ class Container implements IContainer
             if ($requiredTypes) {
                 if (is_object($argument)) {
                     foreach ($requiredTypes as $type) {
-                        $type = "\\$type";
+                        $type = '\\$type';
                         if ((interface_exists($type) || class_exists($type))
                             && $argument instanceof $type
                         ) {
@@ -279,19 +279,19 @@ class Container implements IContainer
                     $argType = get_class($argument);
                 }
 
-                if (in_array($argType = gettype($argument), $requiredTypes)
-                    || ($argType === "integer" && in_array("int", $requiredTypes))
-                ) {
-                    return $argument;
-                }
+                try {
+                    return $this->resolvePrimitiveParam($argument, $requiredTypes);
+                } catch (ContainerExceptionInterface) {
+                    $argType = gettype($argument);
 
-                throw new ContainerException(
-                    sprintf(
-                        "Parameter %s of %s should be one of '%s', got %s.",
-                        $paramName, $this->getFunctionFullName($className, $functionName),
-                        implode(", ", $requiredTypes), $argType
-                    )
-                );
+                    throw new ContainerException(
+                        sprintf(
+                            "Parameter %s of %s should be one of '%s', got %s.",
+                            $paramName, $this->getFunctionFullName($className, $functionName),
+                            implode(", ", $requiredTypes), $argType
+                        )
+                    );
+                }
             }
         }
 
@@ -318,7 +318,50 @@ class Container implements IContainer
 
         return $param->getDefaultValue();
     }
+
+    /**
+     * Checks whether provided param fits with required types
+     * 
+     * @param mixed $argument Primitive user-provided argument
+     * @param array $requiredTypes String names of types accepted by parameter
+     * 
+     * @return mixed
+     * @throws ContainerException
+     */
+    private function resolvePrimitiveParam(mixed $argument, array $requiredTypes): mixed
+    {
+        foreach ($requiredTypes as $type) {
+            if ($type === 'int' && is_numeric($argument)) {
+                return $argument;
+            }
+            if ($type === 'bool' && is_bool($argument)) {
+                return $argument;
+            }
+            if ($type === 'array' && is_array($argument)) {
+                return $argument;
+            }
+            if ($type === 'string' && is_string($argument)) {
+                return $argument;
+            }
+            if ($type === 'null' && is_string($argument)) {
+                return $argument;
+            }
+            if ($type === 'callable' && is_callable($argument)) {
+                return $argument;
+            }
+            if ($type === 'mixed') {
+                return $argument;
+            }
+        }
+
+        throw new ContainerException();
+    }
     
+    /**
+     * Returns the full name of function, or Class::function name for methods
+     * 
+     * @return string
+     */
     private function getFunctionFullName(string $functionName, ?string $className): string
     {
         if ($className === null) {
