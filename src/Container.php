@@ -10,6 +10,7 @@ use \ReflectionException;
 use \ReflectionFunctionAbstract;
 use \Psr\Container\ContainerInterface;
 use \Psr\Container\ContainerExceptionInterface;
+use Throwable;
 
 class Container implements IContainer
 {
@@ -32,11 +33,13 @@ class Container implements IContainer
     {
         if (!class_exists($id)) {
             throw new NotFoundException(sprintf("Class %s does not exist!", $id));
+
         }
         if (!isset($this->entries[$id])) {
             if (!$this->autowire) {
                 throw new NotFoundException(sprintf("Entry %s not found!", $id));
             }
+
             $this->entries[$id] = $this->invokeEntry($id, []);
         }
         if (is_array($this->entries[$id])) {
@@ -67,7 +70,10 @@ class Container implements IContainer
     {
         if (is_array($function)) {
             [$object, $function] = $function;
-            $object = $this->get($object);
+            
+            if (!is_object($object)) {
+                $object = $this->get($object);
+            }
             
             return $this->invokeMethod($function, $object, $parameters);
         }
@@ -145,6 +151,7 @@ class Container implements IContainer
      * Invokes method of provided object
      * 
      * @param string $method Name of the method to invoke 
+     * @param object $object Object on which to invoke the method 
      * 
      * @return mixed
      * 
@@ -155,11 +162,13 @@ class Container implements IContainer
         try{
             $method = new ReflectionMethod($object, $method);
             $parameters = $this->resolveFunctionParams($method, $parameters);
-        } catch (ReflectionException $e) {
-            throw new ContainerException(sprintf(
-                "An error occured while invoking method %s of class %s",
-                $method->getName(), (new ReflectionClass($object))->getShortName()
-            ));
+        } catch (Throwable $e) {
+            throw new ContainerException(
+                sprintf(
+                    "An error occured while invoking %s::%s",
+                    (new ReflectionClass($object))->getShortName(), $method
+                ), 0, $e
+            );
         }
 
         return $method->invokeArgs($object, $parameters);
@@ -169,9 +178,10 @@ class Container implements IContainer
      * Creates a copy of object of provided class with provided parameters
      * 
      * @param ReflectionClass $reflection Reflection of class
-     * @param array $constructorParams
+     * @param array $constructorParams Parameters to be passed into object constructor
      * 
      * @return object
+     * 
      * @throws ContainerException
      */
     private function instantiateObject(ReflectionClass $reflection, array $constructorParams): object
@@ -196,32 +206,14 @@ class Container implements IContainer
      * 
      * @return array
      */
-    private function resolveFunctionParams(
-        ReflectionFunctionAbstract $function,
-        array $config
-    ): ?array
+    private function resolveFunctionParams(ReflectionFunctionAbstract $function, array $config): ?array
     {
-        $functionName = $function->getName();
-        $className = null;
-        if ($function instanceof ReflectionMethod) {
-            $className = $function->getDeclaringClass()->getName();
-        }
-
-        if (!($params = $function->getParameters()) && $config) {
-            throw new ContainerException(
-                sprintf("%s doesn't take in any parameters!", $this->getFunctionFullName($className, $functionName))
-            );
-        }   
+        $params = $function->getParameters();
 
         $arguments = [];
 
         foreach ($params as $param) {
-            $arguments[] = $this->resolveFunctionParam(
-                $functionName,
-                $className,
-                $config,
-                $param
-            );
+            $arguments[] = $this->resolveFunctionParam($function, $param, $config);
         }
 
         return $arguments;
@@ -239,10 +231,9 @@ class Container implements IContainer
      * @throws ContainerException
      */
     private function resolveFunctionParam(
-        string $functionName,
-        ?string $className,
-        array $config,
+        ReflectionFunctionAbstract $function,
         ReflectionParameter $param,
+        array $config
     ): mixed
     {
         $paramName = $param->getName();
@@ -256,40 +247,14 @@ class Container implements IContainer
             $argument = $config[$paramName];
 
             if (is_string($argument) && class_exists('\\' . $argument)) {
-                try {
-                    $argument = $this->get($argument);
-                } catch (\Throwable $e) {
-                    throw new ContainerException(
-                        sprintf(
-                            "Parameter %s provided for %s points to a class which isn't available!",
-                            $paramName, $this->getFunctionFullName($className, $functionName)
-                        ), 0, $e
-                    );
-                }
+                return $this->resolveReferencedParam($function, $paramName, $argument);
             }
             if ($requiredTypes) {
                 if (is_object($argument)) {
-                    foreach ($requiredTypes as $type) {
-                        $type = '\\' . $type;
-                        if ((interface_exists($type) || class_exists($type))
-                            && $argument instanceof $type
-                        ) {
-                            return $argument;
-                        }
-                    }
-                } else {
-                    try {
-                        return $this->resolvePrimitiveParam($argument, $requiredTypes);
-                    } catch (ContainerExceptionInterface) {
-                        throw new ContainerException(
-                            sprintf(
-                                "Parameter %s of %s should be one of '%s', got %s.",
-                                $paramName, $this->getFunctionFullName($className, $functionName),
-                                implode(", ", $requiredTypes), $this->getArgumentType($argument)
-                            )
-                        );
-                    }
+                    return $this->resolveProvidedObject($paramName, $function, $argument, $requiredTypes);
                 }
+
+                return $this->resolvePrimitiveParam($paramName, $function, $argument, $requiredTypes);
             }
         }
 
@@ -298,8 +263,9 @@ class Container implements IContainer
                 if (class_exists('\\' . $type)) {
                     return $this->get($type);
                 }
-                if (interface_exists('\\' . $type) && isset($this->interfaces[$type])) {
+                if (isset($this->interfaces[$type]) && interface_exists('\\' . $type)) {
                     $type = $this->interfaces[$type];
+                    
                     return $this->get($type);
                 }
             }
@@ -308,27 +274,105 @@ class Container implements IContainer
         if (!$param->isDefaultValueAvailable()) {
             throw new ContainerException(
                 sprintf(
-                    "Value not provided for parameter %s in %s::%s!",
-                    $paramName, $className, $functionName
+                    "Value not provided for parameter %s in %s!",
+                    $paramName, $this->getFunctionName($function)
                 )
             );
         }
 
         return $param->getDefaultValue();
     }
+    
+    /**
+     * Gets object of class referenced by user
+     * 
+     * @return object
+     * 
+     * @throws ContainerException
+     */
+    private function resolveReferencedParam(
+        ReflectionFunctionAbstract $function,
+        string $paramName,
+        mixed $argument
+    ): object
+    {
+        try {
+            return $this->get($argument);
+        } catch (\Throwable $e) {
+            throw new ContainerException(
+                sprintf(
+                    "Parameter %s provided for %s points to a class which isn't available!",
+                    $paramName, $this->getFunctionName($function)
+                ), 0, $e
+            );
+        }
+    }
+
+    /**
+     * Checks whether provided object fits with parameter constraints
+     * 
+     * @param string $paramName Name of the parameter
+     * @param ReflectionFunctionAbstract $function
+     * @param object $argument User-provided object
+     * @param array $requiredTypes String names of types accepted by parameter
+     * 
+     * @return object
+     * 
+     * @throws ContainerException
+     */
+    private function resolveProvidedObject(
+        string $paramName,
+        ReflectionFunctionAbstract $function,
+        object $argument,
+        array $requiredTypes
+    ): object
+    {
+        if (!$requiredTypes) {
+            return $argument;
+        }
+
+        foreach ($requiredTypes as $type) {
+            $type = '\\' . $type;
+            if (((interface_exists($type) || class_exists($type)) && $argument instanceof $type)
+                || $type === 'mixed'
+            ) {
+                return $argument;
+            }
+        }
+
+        throw new ContainerException(sprintf(
+            "Object provided to param %s of %s is of wrong type. Expected one of '%s', got %s!",
+            $paramName, $this->getFunctionName($function), implode(', ', $requiredTypes), get_class($argument)
+        ));
+    }
 
     /**
      * Checks whether provided param fits with required types
      * 
+     * @param string $paramName Name of the parameter
+     * @param ReflectionFunctionAbstract $function
      * @param mixed $argument Primitive user-provided argument
      * @param array $requiredTypes String names of types accepted by parameter
      * 
      * @return mixed
+     * 
      * @throws ContainerException
      */
-    private function resolvePrimitiveParam(mixed $argument, array $requiredTypes): mixed
+    private function resolvePrimitiveParam(
+        string $paramName,
+        ReflectionFunctionAbstract $function,
+        mixed $argument,
+        array $requiredTypes
+    ): mixed
     {
+        if (!$requiredTypes) {
+            return $argument;
+        }
+
         foreach ($requiredTypes as $type) {
+            if ($type === 'mixed') {
+                return $argument;
+            }
             if ($type === 'int' && is_numeric($argument)) {
                 return $argument;
             }
@@ -347,25 +391,31 @@ class Container implements IContainer
             if ($type === 'callable' && is_callable($argument)) {
                 return $argument;
             }
-            if ($type === 'mixed') {
-                return $argument;
-            }
         }
 
-        throw new ContainerException();
+        throw new ContainerException(
+            sprintf(
+                "Parameter %s of %s should be one of '%s', got %s.",
+                $paramName, $this->getFunctionName($function),
+                implode(", ", $requiredTypes), $this->getArgumentType($argument)
+            )
+        );
     }
     
     /**
-     * Returns the full name of function, or Class::function name for methods
+     * Returns the name of function, or Class::MethodName for methods
+     * 
+     * @param ReflectionFunctionAbstract $function
      * 
      * @return string
      */
-    private function getFunctionFullName(string $functionName, ?string $className): string
+    private function getFunctionName(ReflectionFunctionAbstract $function): string
     {
-        if ($className === null) {
-            return 'Function ' . $functionName;
+        if ($function instanceof ReflectionMethod) {
+            return $function->getDeclaringClass()->getName() . '::' . $function->getName();
         }
-        return 'Method ' . $className . '::'. $functionName;
+
+        return $function->getName();
     }
 
     /**

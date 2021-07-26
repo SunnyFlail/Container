@@ -23,7 +23,7 @@ class ContainerProvider
         $container = new Container();
         return $container->withEntries([
             ReflectionClass::class => [
-                "objectOrClass" => ArrayIterator::class
+                'objectOrClass' => ArrayIterator::class
             ],
             ArrayIterator::class => [
                 "array" => []

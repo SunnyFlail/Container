@@ -10,7 +10,8 @@ interface IContainer extends ContainerInterface
     /**
      * Invokes a function with provided parameters
      * 
-     * @param array|string|callable $function - It may be an array containing class name and method name, name of the function or a Closure
+     * @param array|string|callable $function - It may be an array containing class name / object and method name,
+     * name of the function or a Closure
      * @param array $parameters Associative array with keys as parameter names
      * 
      * @return mixed
